@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Read the contributing guide first
+    url: https://github.com/suryakulshreshtha/Forkable-AI-Engineering-Starter-Pack-To-Full-Send/blob/main/CONTRIBUTING.md
+    about: How drills are written, judged and verified.

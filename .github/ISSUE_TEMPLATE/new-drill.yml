@@ -1,0 +1,46 @@
+name: New drill idea
+description: Propose a drill for a level, or a new level.
+labels: ["new drill"]
+body:
+  - type: input
+    id: level
+    attributes:
+      label: Level
+      placeholder: "L6 Retrieval That Doesn't Lie"
+    validations:
+      required: true
+  - type: input
+    id: title
+    attributes:
+      label: Drill title
+      placeholder: "Hybrid search"
+    validations:
+      required: true
+  - type: textarea
+    id: job
+    attributes:
+      label: The job
+      description: What the learner builds, with function names and return shapes.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: Where this shows up in real AI engineering work.
+    validations:
+      required: true
+  - type: textarea
+    id: judge
+    attributes:
+      label: How the judge checks it
+      description: Two or three test ideas, each one sentence.
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: House rules
+      options:
+        - label: It runs on the Python standard library only, fast, with no network or GPU.
+          required: true
+        - label: I will write it myself, credit the ideas it uses, and copy nothing.
+          required: true

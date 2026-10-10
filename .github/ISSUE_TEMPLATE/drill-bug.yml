@@ -1,0 +1,42 @@
+name: Drill bug
+description: A judge, brief, hint or reference answer looks wrong.
+labels: ["bug"]
+body:
+  - type: input
+    id: drill
+    attributes:
+      label: Drill
+      description: The drill key or slug, for example 6.2 or bm25.
+      placeholder: "6.2"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Paste the output of `python fullsend.py check <drill>`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Python version and OS
+      placeholder: "Python 3.12, macOS 15"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you file
+      options:
+        - label: I ran `python fullsend.py doctor` and it reports no problems.
+          required: true
+        - label: I did not paste a full solution into this issue.
+          required: true

@@ -6,6 +6,7 @@
 
 Twenty-eight drills that take you from a dot product to a retrieval engine that answers questions about this repository with citations. Plain Python, standard library only, one command to check your work.
 
+[![CI](https://github.com/suryakulshreshtha/Forkable-AI-Engineering-Starter-Pack-To-Full-Send/actions/workflows/fullsend.yml/badge.svg)](https://github.com/suryakulshreshtha/Forkable-AI-Engineering-Starter-Pack-To-Full-Send/actions/workflows/fullsend.yml)
 ![License: MIT](https://img.shields.io/badge/license-MIT-0b7285?style=flat-square)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-0b7285?style=flat-square)
 ![Dependencies: 0](https://img.shields.io/badge/dependencies-0-0b7285?style=flat-square)
