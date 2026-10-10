@@ -1,0 +1,13 @@
+[
+  {"q": "How do I pull new drills from upstream into my fork?", "expect_path": "FORK-ME.md", "expect_words": ["upstream"]},
+  {"q": "Why does upstream never ship drill.py?", "expect_path": "FORK-ME.md", "expect_words": ["drill.py"]},
+  {"q": "What license does this project use?", "expect_path": "README.md", "expect_words": ["MIT"]},
+  {"q": "How should an AI coding assistant help a learner?", "expect_path": "COACH.md", "expect_words": ["learner"]},
+  {"q": "Was any code copied from other repositories?", "expect_path": "ORIGINALITY.md", "expect_words": ["copied"]},
+  {"q": "How do I add a new drill?", "expect_path": "CONTRIBUTING.md", "expect_words": ["fullsend.py new"]},
+  {"q": "What does the verify command check?", "expect_path": "CONTRIBUTING.md", "expect_words": ["stub"]},
+  {"q": "How do I start a drill over from scratch?", "expect_words": ["reset"]},
+  {"q": "How do I bake sourdough bread?", "unanswerable": true},
+  {"q": "What is the capital of Peru?", "unanswerable": true},
+  {"q": "Who won the football world cup?", "unanswerable": true}
+]

@@ -1,0 +1,57 @@
+name: fullsend
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Curriculum health (references pass, stubs fail cleanly, docs current)
+        run: python fullsend.py verify
+
+      - name: Your board
+        run: |
+          {
+            echo "## Full Send board"
+            echo
+            python fullsend.py status --summary
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  oldest-python:
+    # Pinned: Python 3.9 has no prebuilt runner image for Ubuntu releases after 24.04.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+      - run: python fullsend.py verify
+
+  upstream-stays-clean:
+    # Only on the original repository: learners' drill.py files belong in their forks.
+    if: github.repository == 'suryakulshreshtha/Forkable-AI-Engineering-Starter-Pack-To-Full-Send'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: No drill.py files upstream
+        run: |
+          found="$(git ls-files | grep -E '(^|/)drill\.py$' || true)"
+          if [ -n "$found" ]; then
+            echo "::error::drill.py files must not be committed to the upstream repository:"
+            echo "$found"
+            echo "Open pull requests from a branch based on upstream/main that contains no drill.py files."
+            exit 1
+          fi
+          echo "clean: no drill.py files tracked"

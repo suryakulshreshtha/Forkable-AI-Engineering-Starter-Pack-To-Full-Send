@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# fullsend
+drill.py.bak
+.fullsend-write-test
+
+# OS and editor clutter
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Note: drill.py files are NOT ignored. In your fork they are your work; commit them.
+# Upstream simply never adds them.
