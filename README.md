@@ -1,3 +1,5 @@
+![Forkable AI Engineering banner: nine levels, 28 drills, zero dependencies](assets/full-send-banner.png)
+
 # Forkable AI Engineering: Starter Pack to Full Send
 
 **Fork it. Fill it in. Make the judge say CLEARED.**
