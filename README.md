@@ -51,6 +51,36 @@ Use `python3` instead of `python` if that is what your system calls it.
   2/8 passing  ·  stuck? python fullsend.py hint 1.3
 ```
 
+## The shape of the course
+
+Read it top to bottom. Each level reuses what the one above it built, so the order is the build order. Already comfortable with a level? Clear its drills quickly and keep going.
+
+<!-- shape:start -->
+```mermaid
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#f6f8fa','primaryTextColor':'#1f2328','primaryBorderColor':'#1f883d','lineColor':'#6e7781','fontSize':'14px'}}}%%
+flowchart TB
+  L1["L1 · Numbers That Learn<br/><sub>3 drills · 45 XP</sub>"]
+  L2["L2 · Tiny Autograd<br/><sub>3 drills · 85 XP</sub>"]
+  L3["L3 · Classic ML, No Excuses<br/><sub>3 drills · 55 XP</sub>"]
+  L4["L4 · Language From Scratch<br/><sub>3 drills · 80 XP</sub>"]
+  L5["L5 · Attention Is Weighted Averages<br/><sub>3 drills · 70 XP</sub>"]
+  L6["L6 · Retrieval That Doesn't Lie<br/><sub>3 drills · 75 XP</sub>"]
+  L7["L7 · Agents Without Magic<br/><sub>3 drills · 85 XP</sub>"]
+  L8["L8 · Ship It<br/><sub>3 drills · 80 XP</sub>"]
+  L9["L9 · Full Send<br/><sub>4 drills · 125 XP</sub>"]
+  L1 --> L2
+  L2 --> L3
+  L3 --> L4
+  L4 --> L5
+  L5 --> L6
+  L6 --> L7
+  L7 --> L8
+  L8 --> L9
+  class L9 capstone
+  classDef capstone fill:#dafbe1,stroke:#1f883d,stroke-width:2px
+```
+<!-- shape:end -->
+
 ## The map
 
 Nine levels. Each one leans on the last, and the kit (below) hands you finished versions of earlier work so an old bug never haunts a new level.
