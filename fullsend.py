@@ -5,9 +5,11 @@ Learner commands
   python fullsend.py init                 create your drill.py files (never overwrites)
   python fullsend.py next                 show the next drill you have not cleared
   python fullsend.py check <drill>        run the judge against your drill.py
+  python fullsend.py watch <drill>        re-run the judge every time you save drill.py
   python fullsend.py hint <drill> [n|all] reveal hints one at a time
-  python fullsend.py status               the board: every drill, cleared or not
-  python fullsend.py card                 write PROGRESS.md for your fork
+  python fullsend.py status [--json]      the board: every drill, cleared or not
+  python fullsend.py card [--badge]       write PROGRESS.md (and a badge file) for your fork
+  python fullsend.py sync [--dry-run]     pull new drills from upstream into your fork
   python fullsend.py reset <drill>        back up your drill.py and start it fresh
   python fullsend.py doctor               check your setup
 
@@ -26,6 +28,8 @@ import argparse
 import ast
 import difflib
 import importlib.util
+import itertools
+import json
 import os
 import re
 import shutil
@@ -36,18 +40,22 @@ import tempfile
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 ROOT = Path(__file__).resolve().parent
 LEVELS_DIR = ROOT / "levels"
 MIN_PY = (3, 9)
 UPSTREAM_SLUG = "suryakulshreshtha/Forkable-AI-Engineering-Starter-Pack-To-Full-Send"
 UPSTREAM_URL = f"https://github.com/{UPSTREAM_SLUG}.git"
+SOFT_TIMEOUT = 5.0  # seconds one test may run before the judge interrupts it
+HARD_GRACE = 2.0  # extra seconds before a judge process that went silent is killed
+WORKER = "_judge-worker"  # hidden subcommand: the child process that runs one judge
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -357,13 +365,11 @@ class Outcome:
     detail: str = ""
 
 
-_load_counter = 0
+_load_counter = itertools.count(1)
 
 
 def _load(path: Path, prefix: str):
-    global _load_counter
-    _load_counter += 1
-    name = f"_fullsend_{prefix}_{_load_counter}"
+    name = f"_fullsend_{prefix}_{next(_load_counter)}"
     spec = importlib.util.spec_from_file_location(name, str(path))
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -383,43 +389,248 @@ def _where(exc: BaseException, path: Path) -> str:
     return f" (line {f.lineno}: {f.line.strip()})" if f.line else f" (line {f.lineno})"
 
 
-def judge(drill: Drill, target: Path, timeout: float = 5.0) -> list:
-    """Run every test_ function in the drill's judge against the module at `target`.
+def _soft_timeout() -> float:
+    """Seconds one test may run before the judge interrupts it (FULLSEND_TIMEOUT overrides)."""
+    try:
+        return float(os.environ.get("FULLSEND_TIMEOUT", SOFT_TIMEOUT))
+    except ValueError:
+        return SOFT_TIMEOUT
 
-    After one test hangs, the remaining tests get a much shorter limit, so a single
-    infinite loop costs seconds rather than a minute.
+
+def _inprocess() -> bool:
+    """FULLSEND_INPROCESS=1 judges inside this process, which is handy with a debugger."""
+    return bool(os.environ.get("FULLSEND_INPROCESS"))
+
+
+def _run_tests(tests_path: Path, target: Path, timeout: float, start: int, emit) -> None:
+    """Run the judge's tests in this process and report each step through emit(e=..., ...).
+
+    Events: tests (every test name), start (index), done (index, name, status, detail).
+    Python-level loops are interrupted after `timeout`; one long C call (sum(range(10**13)))
+    cannot be, which is why judge() normally runs this in a child process it can kill.
     """
-    tests_module = _load(drill.tests, "tests")
+    tests_module = _load(tests_path, "tests")
     tests = [(n, f) for n, f in vars(tests_module).items() if n.startswith("test_") and callable(f)]
+    emit(e="tests", names=[n for n, _ in tests])
+
+    def finish_rest(status: str, detail: str) -> None:
+        for i in range(start, len(tests)):
+            emit(e="done", i=i, name=tests[i][0], status=status, detail=detail)
+
     try:
         with _time_limit(timeout):
             module = _load(target, "target")
     except NotImplementedError as exc:
-        return [Outcome(n, "todo", str(exc)) for n, _ in tests]
+        return finish_rest("todo", str(exc))
     except _Timeout:
-        return [Outcome(n, "error", "importing your file took too long") for n, _ in tests]
+        return finish_rest("error", "importing your file took too long")
+    except SystemExit:
+        return finish_rest("error", f"{target.name} called exit() while importing")
     except Exception as exc:  # syntax errors, missing imports, ...
-        why = f"could not import {target.name}: {type(exc).__name__}: {exc}"
-        return [Outcome(n, "error", why) for n, _ in tests]
+        return finish_rest("error", f"could not import {target.name}: {type(exc).__name__}: {exc}")
 
-    outcomes, limit = [], timeout
-    for name, fn in tests:
+    limit = timeout
+    for i in range(start, len(tests)):
+        name, fn = tests[i]
+        emit(e="start", i=i)
+        status, detail = "pass", ""
         try:
             with _time_limit(limit):
                 fn(module)
-            outcomes.append(Outcome(name, "pass"))
         except NotImplementedError as exc:
-            outcomes.append(Outcome(name, "todo", str(exc) or "not implemented yet"))
+            status, detail = "todo", str(exc) or "not implemented yet"
         except AssertionError as exc:
-            detail = str(exc) or "assertion failed" + _where(exc, drill.tests)
-            outcomes.append(Outcome(name, "fail", detail))
+            status, detail = "fail", str(exc) or "assertion failed" + _where(exc, tests_path)
         except _Timeout:
-            outcomes.append(Outcome(name, "error", f"no answer after {limit:g}s: infinite loop?"))
-            limit = min(timeout, 1.0)
+            status, detail = "error", f"no answer after {limit:g}s: infinite loop?"
+            limit = min(timeout, 1.0)  # after one hang the rest get a much shorter limit
+        except SystemExit:
+            status, detail = "error", "your code called exit()"
         except Exception as exc:
-            detail = f"{type(exc).__name__}: {exc}{_where(exc, target)}"
-            outcomes.append(Outcome(name, "error", detail))
-    return outcomes
+            status, detail = "error", f"{type(exc).__name__}: {exc}{_where(exc, target)}"
+        emit(e="done", i=i, name=name, status=status, detail=detail)
+
+
+def judge_inprocess(drill: Drill, target: Path, timeout: float | None = None) -> list:
+    """Judge inside this process. No hard kill: see judge_isolated."""
+    timeout = _soft_timeout() if timeout is None else timeout
+    names, results = [], {}
+
+    def emit(**event):
+        if event["e"] == "tests":
+            names.extend(event["names"])
+        elif event["e"] == "done":
+            results[event["i"]] = Outcome(event["name"], event["status"], event["detail"])
+
+    _run_tests(drill.tests, target, timeout, 0, emit)
+    return [results[i] for i in range(len(names)) if i in results]
+
+
+def _worker_main(argv) -> int:
+    """The child process: run the tests from --start and log events to --out as JSON lines."""
+    parser = argparse.ArgumentParser(prog=f"fullsend.py {WORKER}")
+    parser.add_argument("--tests", required=True)
+    parser.add_argument("--target", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--timeout", type=float, required=True)
+    parser.add_argument("--start", type=int, default=0)
+    a = parser.parse_args(argv)
+    with open(a.out, "a", encoding="utf-8") as fh:
+        def emit(**event):
+            fh.write(json.dumps(event) + "\n")
+            fh.flush()
+
+        try:
+            _run_tests(Path(a.tests), Path(a.target), a.timeout, a.start, emit)
+        except BaseException as exc:  # the judge itself is broken, not the learner's code
+            emit(e="crash", detail=f"{type(exc).__name__}: {exc}")
+            return 3
+    return 0
+
+
+def _stop(proc) -> None:
+    """Kill the judge process, and on POSIX anything it started."""
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _read_events(path: Path, offset: int):
+    """Return (events, new_offset) for the complete JSON lines written after `offset`."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            data = fh.read()
+    except OSError:
+        return [], offset
+    end = data.rfind(b"\n")
+    if end < 0:
+        return [], offset
+    events = []
+    for line in data[: end + 1].splitlines():
+        try:
+            events.append(json.loads(line.decode("utf-8")))
+        except ValueError:
+            pass
+    return events, offset + end + 1
+
+
+def judge_isolated(drill: Drill, target: Path, timeout: float | None = None, show_output: bool = False) -> list:
+    """Run the judge in a child process, so one runaway test can be killed outright.
+
+    The child logs progress to a file. If it goes silent for longer than the per-test
+    limit plus a grace period, it is killed, only that test is marked as an error, and
+    a fresh child carries on with the tests after it.
+    """
+    timeout = _soft_timeout() if timeout is None else timeout
+    names, results = None, {}
+    start = 0
+    sys.stdout.flush()
+    sys.stderr.flush()
+    with tempfile.TemporaryDirectory() as tmp:
+        attempt = 0
+        while True:
+            attempt += 1
+            hard = timeout + HARD_GRACE
+            progress = Path(tmp) / f"progress{attempt}.jsonl"
+            progress.write_text("", encoding="utf-8")
+            errlog = Path(tmp) / f"stderr{attempt}.txt"
+            cmd = [sys.executable, str(Path(__file__).resolve()), WORKER,
+                   "--tests", str(drill.tests), "--target", str(target), "--out", str(progress),
+                   "--timeout", repr(timeout), "--start", str(start)]
+            popen_kwargs = {"stdin": subprocess.DEVNULL}
+            if os.name == "posix":
+                popen_kwargs["start_new_session"] = True
+            err_fh = None
+            if not show_output:  # learners' print() calls only show up in `check`
+                err_fh = open(errlog, "wb")
+                popen_kwargs.update(stdout=subprocess.DEVNULL, stderr=err_fh)
+            state = {"current": None, "last": time.monotonic(), "note": ""}
+
+            def absorb(events):
+                nonlocal names
+                for ev in events:
+                    state["last"] = time.monotonic()
+                    kind = ev.get("e")
+                    if kind == "tests" and names is None:
+                        names = list(ev["names"])
+                    elif kind == "start":
+                        state["current"] = ev["i"]
+                    elif kind == "done":
+                        results[ev["i"]] = Outcome(ev["name"], ev["status"], ev.get("detail", ""))
+                        state["current"] = None
+                    elif kind == "crash":
+                        state["note"] = ev.get("detail", "")
+
+            killed = False
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+            try:
+                offset = 0
+                while True:
+                    finished = proc.poll() is not None
+                    events, offset = _read_events(progress, offset)
+                    absorb(events)
+                    if finished:
+                        break
+                    if time.monotonic() - state["last"] > hard:
+                        _stop(proc)
+                        killed = True
+                        events, offset = _read_events(progress, offset)
+                        absorb(events)
+                        break
+                    time.sleep(0.02)
+            finally:
+                if proc.poll() is None:
+                    _stop(proc)
+                if err_fh is not None:
+                    err_fh.close()
+
+            tail = ""
+            if not show_output:
+                try:
+                    tail = errlog.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-1]
+                except (OSError, IndexError):
+                    tail = ""
+            if names is None:
+                why = state["note"] or tail or f"the judge process exited with code {proc.returncode} before listing tests"
+                return [Outcome("judge", "error", why)]
+            missing = [i for i in range(start, len(names)) if i not in results]
+            if not missing:
+                break
+            crash = f"your code crashed the judge process (exit code {proc.returncode})" + (f": {tail}" if tail else "")
+            current = state["current"]
+            if current is not None and current in missing:
+                why = f"no answer after {hard:g}s: infinite loop? (the judge stopped it)" if killed else crash
+                results[current] = Outcome(names[current], "error", why)
+                start = current + 1
+                timeout = min(timeout, 1.0)  # after one hang the rest get a much shorter limit
+                if start >= len(names):
+                    break
+                continue
+            why = "importing your file took too long" if killed else crash
+            for i in missing:
+                results[i] = Outcome(names[i], "error", why)
+            break
+    return [results[i] for i in range(len(names)) if i in results]
+
+
+def judge(drill: Drill, target: Path, timeout: float | None = None, show_output: bool = False) -> list:
+    """Run every test_ function in the drill's judge against the module at `target`.
+
+    Normally this happens in a child process, so a drill that never returns is killed
+    instead of freezing the runner. FULLSEND_INPROCESS=1 judges in this process instead.
+    """
+    if _inprocess():
+        return judge_inprocess(drill, target, timeout)
+    return judge_isolated(drill, target, timeout, show_output)
 
 
 def cleared(outcomes) -> bool:
@@ -513,6 +724,27 @@ def cmd_next(args) -> int:
     return 0
 
 
+def _check_once(levels, d: Drill, target: Path, reference: bool) -> int:
+    print(f"{cyan(SYM_ARROW)} {bold(d.key + ' · ' + d.title)}  {dim(rel(target))}")
+    started = time.perf_counter()
+    outcomes = judge(d, target, show_output=True)
+    print_outcomes(outcomes)
+    passed = sum(o.status == "pass" for o in outcomes)
+    took = time.perf_counter() - started
+    if cleared(outcomes):
+        print(green(bold(f"\n  CLEARED  +{d.xp} XP")) + dim(f"  ({passed}/{len(outcomes)} in {took:.2f}s)"))
+        if not reference:
+            nxt = _after(levels, d)
+            print(dim("  commit it:"))
+            print(dim(f"    git add {rel(d.mine)}"))
+            print(dim(f"    git commit -m \"clear {d.key}\""))
+            if nxt:
+                print(dim(f"  next up:    python fullsend.py check {nxt.key}  ({nxt.title})"))
+        return 0
+    print(f"\n  {passed}/{len(outcomes)} passing" + dim(f"  ·  stuck? python fullsend.py hint {d.key}"))
+    return 1
+
+
 def cmd_check(args) -> int:
     levels = discover()
     d = find_drill(levels, args.drill)
@@ -520,22 +752,7 @@ def cmd_check(args) -> int:
     if not target.exists():
         print(yellow(f"{rel(target)} does not exist yet. Run: python fullsend.py init"))
         return 1
-    print(f"{cyan(SYM_ARROW)} {bold(d.key + ' · ' + d.title)}  {dim(rel(target))}")
-    started = time.perf_counter()
-    outcomes = judge(d, target)
-    print_outcomes(outcomes)
-    passed = sum(o.status == "pass" for o in outcomes)
-    took = time.perf_counter() - started
-    if cleared(outcomes):
-        print(green(bold(f"\n  CLEARED  +{d.xp} XP")) + dim(f"  ({passed}/{len(outcomes)} in {took:.2f}s)"))
-        if not args.reference:
-            nxt = _after(levels, d)
-            print(dim(f"  commit it:  git add {rel(d.mine)} && git commit -m \"clear {d.key}\""))
-            if nxt:
-                print(dim(f"  next up:    python fullsend.py check {nxt.key}  ({nxt.title})"))
-        return 0
-    print(f"\n  {passed}/{len(outcomes)} passing" + dim(f"  ·  stuck? python fullsend.py hint {d.key}"))
-    return 1
+    return _check_once(levels, d, target, args.reference)
 
 
 def _after(levels, drill: Drill):
@@ -571,18 +788,26 @@ def cmd_hint(args) -> int:
 
 
 def collect_board(levels, reference: bool = False):
-    rows = []
-    for level in levels:
-        states = []
-        for d in level.drills:
-            if reference:
-                outcomes = judge(d, d.reference)
-                ok = cleared(outcomes)
-                states.append((d, "cleared" if ok else "started", sum(o.status == "pass" for o in outcomes), len(outcomes)))
-            else:
-                states.append((d, *drill_state(d)))
-        rows.append((level, states))
-    return rows
+    def work(d: Drill):
+        if reference:
+            outcomes = judge(d, d.reference)
+            ok = cleared(outcomes)
+            return ("cleared" if ok else "started", sum(o.status == "pass" for o in outcomes), len(outcomes))
+        return drill_state(d)
+
+    drills = all_drills(levels)
+    if _inprocess() or len(drills) < 2:  # in-process judging relies on the main thread's timer
+        results = [work(d) for d in drills]
+    else:  # each judge is its own child process, so they can run side by side
+        pool = ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2))
+        try:
+            results = list(pool.map(work, drills))
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown()
+    by_key = {d.key: r for d, r in zip(drills, results)}
+    return [(level, [(d, *by_key[d.key]) for d in level.drills]) for level in levels]
 
 
 def cmd_status(args) -> int:
@@ -592,6 +817,11 @@ def cmd_status(args) -> int:
     earned = sum(d.xp for _, states in rows for d, s, *_ in states if s == "cleared")
     n_cleared = sum(1 for _, states in rows for _, s, *_ in states if s == "cleared")
     n_all = sum(len(states) for _, states in rows)
+    if args.json and args.summary:
+        raise SystemExit("choose one of --json and --summary")
+    if args.json:
+        print_utf8(json.dumps(board_json(rows, earned, total_xp, n_cleared, n_all), indent=2, ensure_ascii=False))
+        return 0
     if args.summary:
         print_utf8(markdown_board(rows, earned, total_xp, n_cleared, n_all))
         return 0
@@ -651,6 +881,41 @@ def markdown_board(rows, earned, total_xp, n_cleared, n_all) -> str:
     return "\n".join(out)
 
 
+def board_json(rows, earned, total_xp, n_cleared, n_all) -> dict:
+    """The board as plain data, for scripts, dashboards and badges."""
+    return {
+        "xp": {"earned": earned, "total": total_xp},
+        "drills": {"cleared": n_cleared, "total": n_all},
+        "levels": [
+            {
+                "level": level.number,
+                "title": level.title,
+                "drills": [
+                    {"key": d.key, "title": d.title, "xp": d.xp, "state": state, "passed": passed, "total": total}
+                    for d, state, passed, total in states
+                ],
+            }
+            for level, states in rows
+        ],
+    }
+
+
+def badge_json(earned, total_xp, n_cleared, n_all) -> dict:
+    """A shields.io endpoint payload: https://shields.io/badges/endpoint-badge"""
+    pct = 0 if n_all == 0 else 100 * n_cleared / n_all
+    if n_cleared == 0:
+        color = "lightgrey"
+    elif pct < 34:
+        color = "orange"
+    elif pct < 67:
+        color = "yellow"
+    elif pct < 100:
+        color = "yellowgreen"
+    else:
+        color = "brightgreen"
+    return {"schemaVersion": 1, "label": "full send", "message": f"{n_cleared}/{n_all} drills · {earned} XP", "color": color}
+
+
 def cmd_card(args) -> int:
     levels = discover()
     rows = collect_board(levels)
@@ -672,7 +937,15 @@ def cmd_card(args) -> int:
     out = ROOT / "PROGRESS.md"
     out.write_text(text, encoding="utf-8")
     print(f"{green(SYM_PASS)} wrote {rel(out)}: {earned}/{total_xp} XP, {n_cleared}/{n_all} drills")
-    print(dim("  commit it so your fork shows where you are: git add PROGRESS.md && git commit -m card"))
+    files = "PROGRESS.md"
+    if args.badge:
+        badge = ROOT / "progress-badge.json"
+        badge.write_text(json.dumps(badge_json(earned, total_xp, n_cleared, n_all), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"{green(SYM_PASS)} wrote {rel(badge)} (a shields.io endpoint file: see FORK-ME.md)")
+        files += " progress-badge.json"
+    print(dim("  commit it so your fork shows where you are:"))
+    print(dim(f"    git add {files}"))
+    print(dim("    git commit -m \"progress card\""))
     return 0
 
 
@@ -687,12 +960,120 @@ def cmd_reset(args) -> int:
     return 0
 
 
+def cmd_watch(args) -> int:
+    levels = discover()
+    d = find_drill(levels, args.drill)
+    target = d.reference if args.reference else d.mine
+    if not target.exists():
+        print(yellow(f"{rel(target)} does not exist yet. Run: python fullsend.py init"))
+        return 1
+    print(dim(f"watching {rel(target)}: save the file to re-run the judge, Ctrl+C to stop"))
+
+    def stamp():
+        try:
+            return target.stat().st_mtime_ns, d.tests.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    seen = None
+    while True:
+        now = stamp()
+        if now is not None and now != seen:
+            time.sleep(0.15)  # let an editor finish writing before the judge reads the file
+            seen = stamp()
+            print(dim(f"\n--- {time.strftime('%H:%M:%S')} ---"))
+            code = _check_once(levels, d, target, args.reference)
+            sys.stdout.flush()  # when piped (| tee), results would otherwise wait for the next run
+            if code == 0 and args.exit_on_clear:
+                return 0
+        time.sleep(0.4)
+
+
 def _git(git: str, *cmd) -> str:
     try:
         done = subprocess.run([git, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return ""
     return done.stdout.strip()
+
+
+def _git_run(git: str, *cmd, timeout: int = 120):
+    """Run git in the repository and return (exit code, stdout, stderr)."""
+    try:
+        done = subprocess.run([git, *cmd], cwd=ROOT, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+    return done.returncode, done.stdout.strip(), done.stderr.strip()
+
+
+def cmd_sync(args) -> int:
+    git = shutil.which("git")
+    if not git:
+        print(red("git is not installed. Install it, then run this again."))
+        return 1
+    if not (ROOT / ".git").exists():
+        print(yellow("This folder is not a git clone, so there is nothing to sync."))
+        return 1
+    origin = _git(git, "remote", "get-url", "origin")
+    if UPSTREAM_SLUG.lower() in origin.lower():
+        print("This clone points at the upstream repository itself, so there is nothing to sync. Use: git pull")
+        return 0
+    if not args.dry_run and _git(git, "status", "--porcelain", "--untracked-files=no"):
+        print(yellow("You have uncommitted changes. Commit them first, then sync:"))
+        print(dim("  git add -A"))
+        print(dim("  git commit -m \"save my work\""))
+        return 1
+    upstream_url = os.environ.get("FULLSEND_UPSTREAM", UPSTREAM_URL)
+    if "upstream" not in _git(git, "remote").split():
+        if args.dry_run:
+            print(dim(f"would run: git remote add upstream {upstream_url}"))
+            print(dim("then fetch upstream and merge any new commits (re-run without --dry-run)"))
+            return 0
+        code, _, err = _git_run(git, "remote", "add", "upstream", upstream_url)
+        if code:
+            print(red(f"could not add the upstream remote: {err}"))
+            return 1
+        print(f"{green(SYM_PASS)} added remote 'upstream' -> {upstream_url}")
+    print(dim("fetching upstream ..."))
+    code, _, err = _git_run(git, "fetch", "upstream")
+    if code:
+        print(red(f"git fetch upstream failed: {err}"))
+        return 1
+    ref = f"upstream/{args.branch}"
+    if _git_run(git, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")[0]:
+        print(red(f"upstream has no branch called '{args.branch}' (try: --branch <name>)"))
+        return 1
+    code, count, _ = _git_run(git, "rev-list", "--count", f"HEAD..{ref}")
+    behind = int(count) if code == 0 and count.isdigit() else 0
+    if behind == 0:
+        print(f"{green(SYM_PASS)} already up to date with {ref}")
+        return 0
+    print(f"{behind} new commit(s) on {ref}:")
+    for line in _git_run(git, "log", "--oneline", "-n", "15", f"HEAD..{ref}")[1].splitlines():
+        print(f"  {line}")
+    if args.dry_run:
+        print(dim("dry run: nothing was merged. Run: python fullsend.py sync"))
+        return 0
+    before = {d.key for d in all_drills(discover())}
+    code, out, err = _git_run(git, "merge", "--no-edit", ref)
+    if code:
+        conflicts = _git_run(git, "diff", "--name-only", "--diff-filter=U")[1].splitlines()
+        if conflicts:
+            print(red("The merge stopped on conflicts in:"))
+            for name in conflicts:
+                print(f"  {name}")
+            print("Fix them, then: git add <files>  and  git commit   (or undo it all with: git merge --abort)")
+            print(dim("Conflicts usually mean a file upstream owns (test_drill.py, reference.py, a README) was edited here."))
+        else:
+            print(red(f"git merge failed: {err or out}"))
+        return 1
+    print(f"{green(SYM_PASS)} merged {ref}")
+    cmd_init(args)
+    new = [d for d in all_drills(discover()) if d.key not in before]
+    if new:
+        print(f"{len(new)} new drill(s): " + ", ".join(f"{d.key} {d.title}" for d in new))
+    return 0
 
 
 def cmd_doctor(args) -> int:
@@ -736,7 +1117,7 @@ def cmd_doctor(args) -> int:
     elif in_repo:
         remotes = _git(git, "remote").split()
         line("upstream" in remotes, "an 'upstream' remote is set (for pulling new drills)",
-             f"git remote add upstream {UPSTREAM_URL}")
+             f"python fullsend.py sync   (or: git remote add upstream {UPSTREAM_URL})")
     print()
     print(green("All good. python fullsend.py next") if problems == 0 else yellow(f"{problems} thing(s) to fix above."))
     return 0 if problems == 0 else 1
@@ -980,6 +1361,9 @@ def main(argv=None) -> int:
     if sys.version_info < MIN_PY:
         print(f"fullsend needs Python {MIN_PY[0]}.{MIN_PY[1]}+; you have {sys.version.split()[0]}")
         return 2
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == WORKER:  # internal: the judge's child process
+        return _worker_main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="fullsend.py", description="Runner for Forkable AI Engineering, Starter Pack to Full Send."
     )
@@ -991,13 +1375,22 @@ def main(argv=None) -> int:
     p = sub.add_parser("check", help="judge one drill")
     p.add_argument("drill")
     p.add_argument("--reference", action="store_true", help="judge reference.py instead of drill.py")
+    p = sub.add_parser("watch", help="re-run the judge whenever you save")
+    p.add_argument("drill")
+    p.add_argument("--reference", action="store_true", help="watch reference.py instead of drill.py")
+    p.add_argument("--exit-on-clear", action="store_true", help="stop watching once the drill is cleared")
     p = sub.add_parser("hint", help="reveal a hint")
     p.add_argument("drill")
     p.add_argument("n", nargs="?", help="hint number, or 'all'")
     p = sub.add_parser("status", help="the board")
     p.add_argument("--reference", action="store_true", help="judge every reference.py")
     p.add_argument("--summary", action="store_true", help="print a markdown board (for CI summaries)")
-    sub.add_parser("card", help="write PROGRESS.md")
+    p.add_argument("--json", action="store_true", help="print the board as JSON")
+    p = sub.add_parser("card", help="write PROGRESS.md")
+    p.add_argument("--badge", action="store_true", help="also write progress-badge.json (a shields.io endpoint file)")
+    p = sub.add_parser("sync", help="pull new drills from upstream")
+    p.add_argument("--dry-run", action="store_true", help="show what would be merged, change nothing")
+    p.add_argument("--branch", default="main", help="upstream branch to merge (default: main)")
     p = sub.add_parser("reset", help="restart a drill from a fresh stub")
     p.add_argument("drill")
     sub.add_parser("doctor", help="check your setup")
@@ -1010,8 +1403,8 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
     handlers = {
-        "init": cmd_init, "next": cmd_next, "check": cmd_check, "hint": cmd_hint,
-        "status": cmd_status, "card": cmd_card, "reset": cmd_reset, "doctor": cmd_doctor,
+        "init": cmd_init, "next": cmd_next, "check": cmd_check, "watch": cmd_watch, "hint": cmd_hint,
+        "status": cmd_status, "card": cmd_card, "sync": cmd_sync, "reset": cmd_reset, "doctor": cmd_doctor,
         "build": cmd_build, "verify": cmd_verify, "new": cmd_new,
     }
     if not args.command:

@@ -5,6 +5,7 @@
 ## Checklist
 
 - [ ] `python fullsend.py build` and `python fullsend.py verify` pass locally
+- [ ] `python -m unittest discover -s tests` passes if `fullsend.py` or the capstone changed
 - [ ] No `drill.py` files are included (branch from `upstream/main`, see CONTRIBUTING.md)
 - [ ] Standard library only, and every test runs in well under a second
 - [ ] Written for this repo; any idea it implements is credited in the brief

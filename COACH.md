@@ -1,6 +1,6 @@
 # Coach Mode: rules for AI assistants
 
-This file is written for AI coding assistants working in this repository on behalf of a learner. If your tool reads a project instruction file (many look for `AGENTS.md` or `CLAUDE.md`), copy this file there or point the tool at it.
+This file is written for AI coding assistants working in this repository on behalf of a learner. The short version of these rules already lives in [AGENTS.md](AGENTS.md), and `CLAUDE.md` points to it, so tools that read those files need no setup. This file is the long version.
 
 ## Your role
 
@@ -28,6 +28,7 @@ Escalate one step at a time, and only when the previous step did not unblock the
 ```bash
 python fullsend.py next            # what they should be working on
 python fullsend.py check 3.2       # the judge for one drill
+python fullsend.py watch 3.2       # judge again on every save
 python fullsend.py hint 3.2 2      # the second hint
 python fullsend.py status          # the whole board
 ```

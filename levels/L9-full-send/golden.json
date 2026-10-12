@@ -7,6 +7,10 @@
   {"q": "How do I add a new drill?", "expect_path": "CONTRIBUTING.md", "expect_words": ["fullsend.py new"]},
   {"q": "What does the verify command check?", "expect_path": "CONTRIBUTING.md", "expect_words": ["stub"]},
   {"q": "How do I start a drill over from scratch?", "expect_words": ["reset"]},
+  {"q": "How do I sync my fork with new drills?", "expect_words": ["sync"]},
+  {"q": "How do I re-run the judge every time I save?", "expect_words": ["watch"]},
+  {"q": "How do I add a progress badge to my fork?", "expect_path": "FORK-ME.md", "expect_words": ["badge"]},
+  {"q": "How do I open this in a Codespace?", "expect_path": "FORK-ME.md", "expect_words": ["Codespace"]},
   {"q": "How do I bake sourdough bread?", "unanswerable": true},
   {"q": "What is the capital of Peru?", "unanswerable": true},
   {"q": "Who won the football world cup?", "unanswerable": true}

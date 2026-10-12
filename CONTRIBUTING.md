@@ -75,6 +75,16 @@ This project must stay free of copied material. Before you open a pull request:
 
 More on this in [ORIGINALITY.md](ORIGINALITY.md).
 
+## Testing the runner
+
+The drills have their own judges. The runner, `fullsend.py`, and the capstone app have tests in `tests/`, standard library only:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Run them whenever you touch `fullsend.py` or `levels/L9-full-send/app.py`. CI also runs the capstone evaluation as a gate (`app.py --eval --reference --min-score 1.0`), so a change to any Markdown file that makes PocketRAG answer worse fails the build. Fix the wording, or change `golden.json` on purpose, rather than lowering the bar to silence it.
+
 ## Opening a pull request from your fork
 
 Your fork holds your own `drill.py` answers, and those must never reach upstream (a CI check enforces this). Make each pull request from a fresh branch based on upstream:
