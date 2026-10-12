@@ -117,7 +117,7 @@ python levels/L9-full-send/app.py --reference "what does verify check?"   # see 
 
 ## Learning with an AI assistant
 
-Coding assistants are good tutors and terrible ghostwriters. [COACH.md](COACH.md) is a ready-made instruction file that tells an assistant to run the judge, explain failures and escalate hints, without writing your drills for you. The repository also ships [AGENTS.md](AGENTS.md), and a `CLAUDE.md` that points to it, so assistants that read those files pick up the coaching rules with no setup.
+Coding assistants are good tutors and terrible ghostwriters. [COACH.md](COACH.md) is a ready-made instruction file that tells an assistant to run the judge, explain failures and escalate hints, without writing your drills for you. The repository also ships [AGENTS.md](AGENTS.md), so assistants that read that file pick up the coaching rules with no setup.
 
 ## More
 

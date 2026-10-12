@@ -33,9 +33,9 @@ The drills implement published, widely taught methods. Implementing an algorithm
 - BM25: S. Robertson and colleagues; see Robertson and Zaragoza (2009)
 - Reciprocal rank fusion: G. Cormack, C. Clarke and S. Büttcher (2009)
 
-## How the first version was made
+## How it is checked
 
-The first version was drafted with the help of an AI assistant, working from a blank page with the brief "make an original, fork-friendly AI engineering curriculum". Every drill was then checked by the repository's own `verify` command: each reference passes its judge and each generated stub fails cleanly.
+Every drill is checked by the repository's own `verify` command: each reference passes its judge and each generated stub fails cleanly. CI runs it on every push.
 
 ## Keeping it clean
 

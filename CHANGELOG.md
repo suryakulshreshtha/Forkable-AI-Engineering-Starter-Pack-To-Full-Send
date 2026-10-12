@@ -12,7 +12,7 @@ Notable changes to Full Send. The format follows [Keep a Changelog](https://keep
 - `python fullsend.py card --badge` also writes `progress-badge.json`, a shields.io endpoint file for a live progress badge in your fork's README.
 - Tests for the runner itself in `tests/`, standard library only: `python -m unittest discover -s tests -v`.
 - `levels/L9-full-send/app.py --eval --min-score 0.9` exits with an error when the pass rate is too low, so CI can gate on it. `--max-words`, `--overlap` and `-k` expose the chunking and retrieval settings.
-- `AGENTS.md` (and a `CLAUDE.md` that points to it) so AI coding assistants pick up the coaching rules without setup.
+- `AGENTS.md` so AI coding assistants pick up the coaching rules without setup.
 - A dev container and an "Open in GitHub Codespaces" badge.
 - Dependabot for the GitHub Actions the workflow uses.
 

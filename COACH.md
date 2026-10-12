@@ -1,6 +1,6 @@
 # Coach Mode: rules for AI assistants
 
-This file is written for AI coding assistants working in this repository on behalf of a learner. The short version of these rules already lives in [AGENTS.md](AGENTS.md), and `CLAUDE.md` points to it, so tools that read those files need no setup. This file is the long version.
+This file is written for AI coding assistants working in this repository on behalf of a learner. The short version of these rules already lives in [AGENTS.md](AGENTS.md), so tools that read that file need no setup. If your tool reads a different project instruction file, copy `AGENTS.md` there. This file is the long version.
 
 ## Your role
 
