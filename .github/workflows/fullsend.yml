@@ -8,9 +8,18 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request makes the older run pointless.
+concurrency:
+  group: fullsend-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   judge:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
 
@@ -21,7 +30,14 @@ jobs:
       - name: Curriculum health (references pass, stubs fail cleanly, docs current)
         run: python fullsend.py verify
 
+      - name: Runner tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Capstone evaluation gate
+        run: python levels/L9-full-send/app.py --eval --reference --min-score 1.0
+
       - name: Your board
+        if: matrix.os == 'ubuntu-latest'
         run: |
           {
             echo "## Full Send board"
@@ -38,6 +54,7 @@ jobs:
         with:
           python-version: "3.9"
       - run: python fullsend.py verify
+      - run: python -m unittest discover -s tests -v
 
   upstream-stays-clean:
     # Only on the original repository: learners' drill.py files belong in their forks.
