@@ -67,6 +67,13 @@ START = re.compile(r"^(?P<indent>[ \t]*)# >>> fullsend(?::\s*(?P<label>.*?))?\s*
 END = re.compile(r"^[ \t]*# <<< fullsend\s*$")
 BOARD_START = "<!-- board:start -->"
 BOARD_END = "<!-- board:end -->"
+SHAPE_START = "<!-- shape:start -->"
+SHAPE_END = "<!-- shape:end -->"
+MERMAID_INIT = (
+    "%%{init: {'theme':'base','themeVariables':{'primaryColor':'#f6f8fa',"
+    "'primaryTextColor':'#1f2328','primaryBorderColor':'#1f883d','lineColor':'#6e7781',"
+    "'fontSize':'14px'}}}%%"
+)
 
 # --------------------------------------------------------------------------- output
 
@@ -1206,6 +1213,29 @@ def root_board(levels) -> str:
     return "\n".join(out)
 
 
+def _mermaid_text(text: str) -> str:
+    """Make a title safe inside a double-quoted Mermaid label."""
+    return text.replace("&", "&amp;").replace('"', "#quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def shape_graph(levels) -> str:
+    """A Mermaid flowchart of the levels in order, built from the drills so it cannot drift."""
+    out = [SHAPE_START]
+    if levels:
+        out += ["```mermaid", MERMAID_INIT, "flowchart TB"]
+        for lv in levels:
+            n = len(lv.drills)
+            label = f"L{lv.number} · {_mermaid_text(lv.title)}<br/><sub>{n} drill{'s' if n != 1 else ''} · {lv.xp} XP</sub>"
+            out.append(f'  L{lv.number}["{label}"]')
+        for a, b in zip(levels, levels[1:]):
+            out.append(f"  L{a.number} --> L{b.number}")
+        out.append(f"  class L{levels[-1].number} capstone")
+        out.append("  classDef capstone fill:#dafbe1,stroke:#1f883d,stroke-width:2px")
+        out.append("```")
+    out.append(SHAPE_END)
+    return "\n".join(out)
+
+
 def planned_files(levels) -> dict:
     files = {}
     for lv in levels:
@@ -1215,10 +1245,15 @@ def planned_files(levels) -> dict:
     readme = ROOT / "README.md"
     if readme.exists():
         text = readme.read_text(encoding="utf-8")
-        if BOARD_START in text and BOARD_END in text:
-            head, rest = text.split(BOARD_START, 1)
-            _, tail = rest.split(BOARD_END, 1)
-            files[readme] = head + root_board(levels) + tail
+        for start, end, block in (
+            (BOARD_START, BOARD_END, root_board(levels)),
+            (SHAPE_START, SHAPE_END, shape_graph(levels)),
+        ):
+            if start in text and end in text:
+                head, rest = text.split(start, 1)
+                _, tail = rest.split(end, 1)
+                text = head + block + tail
+        files[readme] = text
     return files
 
 

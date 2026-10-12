@@ -2,6 +2,12 @@
 
 Notable changes to Full Send. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions are tagged in git.
 
+## [Unreleased]
+
+### Added
+
+- A flowchart of the nine levels in the README, with drill counts and XP per level. `python fullsend.py build` regenerates it from the drills between the `shape` markers, and `verify` and CI fail if it is out of date.
+
 ## [1.1.0] - 2026-10-12
 
 ### Added

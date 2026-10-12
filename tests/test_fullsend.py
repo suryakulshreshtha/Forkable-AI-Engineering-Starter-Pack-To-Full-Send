@@ -318,6 +318,63 @@ class CommandTests(CliCase):
         self.assertEqual(self.run_cli("verify").returncode, 0, self.run_cli("verify").stdout)
 
 
+class ShapeGraphTests(CliCase):
+    """The README's level-by-level flowchart is generated, so it must follow the drills."""
+
+    START, END = "<!-- shape:start -->", "<!-- shape:end -->"
+
+    def setUp(self):
+        super().setUp()
+        second = self.repo / "levels" / "L2-next" / "01-spin"
+        second.mkdir(parents=True)
+        (second / "reference.py").write_text(REFERENCE_SPIN, encoding="utf-8")
+        (second / "test_drill.py").write_text(TESTS_SPIN, encoding="utf-8")
+        (second.parent / "_intro.md").write_text('# Next & "Last"\n\nOne drill.\n', encoding="utf-8")
+        self.readme = self.repo / "README.md"
+        self.readme.write_text(f"# T\n\n{self.START}\n{self.END}\n\nafter\n", encoding="utf-8")
+
+    def graph(self) -> str:
+        text = self.readme.read_text(encoding="utf-8")
+        return text.split(self.START)[1].split(self.END)[0]
+
+    def test_build_draws_one_node_per_level_with_counts_and_xp(self):
+        self.assertEqual(self.run_cli("build").returncode, 0)
+        g = self.graph()
+        self.assertIn("```mermaid", g)
+        self.assertIn('L1["L1 · Basics<br/><sub>2 drills · 15 XP</sub>"]', g)
+        self.assertIn("1 drill · 5 XP", g)
+        self.assertIn("L1 --> L2", g)
+        self.assertIn("class L2 capstone", g)
+
+    def test_titles_are_escaped_so_the_diagram_cannot_break(self):
+        self.run_cli("build")
+        self.assertIn("Next &amp; #quot;Last#quot;", self.graph())
+
+    def test_check_notices_a_hand_edited_graph_and_build_repairs_it(self):
+        self.run_cli("build")
+        self.readme.write_text(self.readme.read_text(encoding="utf-8").replace("L1 --> L2", "L2 --> L1"), encoding="utf-8")
+        stale = self.run_cli("build", "--check")
+        self.assertEqual(stale.returncode, 1)
+        self.assertIn("README.md", stale.stdout)
+        self.assertEqual(self.run_cli("build").returncode, 0)
+        self.assertEqual(self.run_cli("build", "--check").returncode, 0)
+
+    def test_text_outside_the_markers_is_left_alone(self):
+        self.run_cli("build")
+        text = self.readme.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# T\n\n") and text.endswith("\n\nafter\n"))
+
+    def test_a_readme_without_markers_is_not_touched(self):
+        self.readme.write_text("# T\n\nno markers here\n", encoding="utf-8")
+        self.run_cli("build")
+        self.assertEqual(self.readme.read_text(encoding="utf-8"), "# T\n\nno markers here\n")
+
+    def test_verify_fails_while_the_graph_is_stale(self):
+        self.assertEqual(self.run_cli("verify").returncode, 1)
+        self.run_cli("build")
+        self.assertEqual(self.run_cli("verify").returncode, 0)
+
+
 class JudgeSafetyTests(CliCase):
     """A drill that misbehaves must cost the learner seconds, never the whole run."""
 
